@@ -2,6 +2,10 @@
 
 Image to Icon Converter with High Quality Output
 
+![Screenshot](Info/IconizerDemo.gif)
+
+[Download Binary](Info/Iconizer.exe)
+
 ## Usage
 
 There are range of software that offer Bitmap to Icon conversion, but most of them are either too simple (only write one image per icon) or too complicated (too much button/steps). This program tries to solve this problem.
