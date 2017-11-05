@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -11,84 +12,32 @@ using TsudaKageyu;
 
 namespace Iconizer
 {
+    public enum DropOperation
+    {
+        NormalExport = 0,
+        DesktopINI = 1,
+        BitmapExport = 2,
+    }
     public partial class Form1 : Form
     {
-
-        public class OptionsData
-        {
-            public List<Size> sizes = new List<Size>();
-            public bool keepAspect;
-            public bool keepCrisp;
-
-            public static OptionsData FromCheckBoxes(CheckedListBox box)
-            {
-                var data = new OptionsData();
-                if (box.GetItemChecked(0))
-                    data.sizes.Add(new Size(8, 8));
-                if (box.GetItemChecked(1))
-                    data.sizes.Add(new Size(16, 16));
-                if (box.GetItemChecked(2))
-                    data.sizes.Add(new Size(32, 32));
-                if (box.GetItemChecked(3))
-                    data.sizes.Add(new Size(48, 48));
-                if (box.GetItemChecked(4))
-                    data.sizes.Add(new Size(64, 64));
-                if (box.GetItemChecked(5))
-                    data.sizes.Add(new Size(128, 128));
-                if (box.GetItemChecked(6))
-                    data.sizes.Add(new Size(256, 256));
-                if (box.GetItemChecked(7))
-                    data.keepCrisp = true;
-                if (box.GetItemChecked(8))
-                    data.keepAspect = true;
-                return data;
-            }
-        }
-        public class BitmapData
-        {
-            public Image bitmap;
-            public string path;
-            public string name;
-
-            public int iteration;
-
-            public override int GetHashCode()
-            {
-                return path.GetHashCode() ^ iteration;
-            }
-
-            public override bool Equals(object obj)
-            {
-                return obj is BitmapData && path.GetHashCode() == ((BitmapData)obj).GetHashCode();
-            }
-
-            public string GetIcoPath()
-            {
-                if (iteration == 0)
-                    return Path.ChangeExtension(path, ".ico");
-                else
-                    return Path.ChangeExtension(path, null) + iteration.ToString() + ".ico";
-            }
-
-            public string GetIcoPath(string directory)
-            {
-                return Path.Combine(directory, Path.GetFileName(GetIcoPath()));
-            }
-
-        }
-
         public List<BitmapData> bitmaps = new List<BitmapData>();
 
-        bool CheckIfImage(string path)
+        static bool CheckIfImage(string path)
         {
             var ext = Path.GetExtension(path);
             return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp";
         }
 
-        bool CheckIfBinary (string path)
+        static bool CheckIfBinary(string path)
         {
             var ext = Path.GetExtension(path);
             return ext == ".exe" || ext == ".dll";
+        }
+
+        static bool CheckIfIcon(string path)
+        {
+            var ext = Path.GetExtension(path);
+            return ext == ".ico";
         }
 
         bool CheckIfExist(string path)
@@ -96,9 +45,9 @@ namespace Iconizer
             return bitmaps.Any((x) => x.path == path);
         }
 
-        bool CheckIfCompatible(string[] paths)
+        static bool CheckIfCompatible(string[] paths)
         {
-            return paths.Any((x) => CheckIfImage(x) || CheckIfBinary(x));
+            return paths.Any((x) => CheckIfImage(x) || CheckIfBinary(x) || CheckIfIcon(x));
         }
 
         void AddImage(Image bitmap, string path)
@@ -116,7 +65,7 @@ namespace Iconizer
             foreach (var icon in icons.GetAllIcons())
             {
                 var iconss = IconUtil.Split(icon);
-                var data = new BitmapData() { bitmap = IconUtil.ToBitmap(Utility.GetNicestIcon(iconss)), path = path, name = Path.GetFileNameWithoutExtension(path), iteration = iter++};
+                var data = new BitmapData() { bitmap = IconUtil.ToBitmap(Utility.GetNicestIcon(iconss)), path = path, name = Path.GetFileNameWithoutExtension(path), iteration = iter++ };
                 bitmaps.Add(data);
                 _view.LargeImageList.Images.Add(data.GetHashCode().ToString(), data.bitmap);
                 _view.Items.Add(new ListViewItem() { ImageKey = data.GetHashCode().ToString(), Text = data.name, ToolTipText = data.path, Tag = data, Selected = true });
@@ -129,7 +78,21 @@ namespace Iconizer
             }
         }
 
+        void AddIcon(string path)
+        {
+            Icon c = new Icon(path);
+            var cc = (IconUtil.Split(c));
+            var data = new BitmapData() { bitmap = IconUtil.ToBitmap(Utility.GetNicestIcon(cc)), path = path, name = Path.GetFileNameWithoutExtension(path) };
+            bitmaps.Add(data);
+            _view.LargeImageList.Images.Add(data.GetHashCode().ToString(), data.bitmap);
+            _view.Items.Add(new ListViewItem() { ImageKey = data.GetHashCode().ToString(), Text = data.name, ToolTipText = data.path, Tag = data, Selected = true });
 
+            foreach (var ic in cc)
+            {
+                ic.Dispose();
+            }
+            c.Dispose();
+        }
 
         void RemoveSelected()
         {
@@ -189,36 +152,48 @@ namespace Iconizer
             }
         }
 
-        StringCollection SendToCopyDump(bool withDesktopINI)
+        StringCollection SendToCopyDump(DropOperation op)
         {
             var options = OptionsData.FromCheckBoxes(_options);
             StringCollection paths = new StringCollection();
-            foreach (ListViewItem item in _view.SelectedItems)
-            {
-                var data = (BitmapData)item.Tag;
-                var images = GetImageSeries(data.bitmap, options);
-                var path = data.GetIcoPath(Path.GetTempPath());
-                if (File.Exists(path)) File.Delete(path);
-                var file = new FileStream(path, FileMode.Create);
-                paths.Add(path);
-                Utility.SavePngsAsIcon(images, file);
-
-                file.Dispose();
-                foreach (var img in images)
+            if (op == DropOperation.BitmapExport)
+                foreach (ListViewItem item in _view.SelectedItems)
                 {
-                    if (img != null)
-                        img.Dispose();
+                    var data = (BitmapData)item.Tag;
+                    var path = data.GetPngPath(Path.GetTempPath());
+                    if (File.Exists(path)) File.Delete(path);
+                    var file = new FileStream(path, FileMode.Create);
+                    paths.Add(path);
+                    data.bitmap.Save(file, ImageFormat.Png);
+                    file.Close();
                 }
-            }
+            else
+                foreach (ListViewItem item in _view.SelectedItems)
+                {
+                    var data = (BitmapData)item.Tag;
+                    var images = GetImageSeries(data.bitmap, options);
+                    var path = data.GetIcoPath(Path.GetTempPath());
+                    if (File.Exists(path)) File.Delete(path);
+                    var file = new FileStream(path, FileMode.Create);
+                    paths.Add(path);
+                    Utility.SavePngsAsIcon(images, file);
 
-            if (withDesktopINI && _view.SelectedItems.Count == 1)
+                    file.Dispose();
+                    foreach (var img in images)
+                    {
+                        if (img != null)
+                            img.Dispose();
+                    }
+                }
+
+            if (op == DropOperation.DesktopINI && _view.SelectedItems.Count == 1)
             {
                 var path = Path.Combine(Path.GetTempPath(), "desktop.ini");
                 if (File.Exists(path)) File.Delete(path);
                 var ico = (BitmapData)_view.SelectedItems[0].Tag;
                 var icon = Path.GetFileName(ico.GetIcoPath());
-                File.WriteAllText(path,string.Format("[.ShellClassInfo]\r\nIconResource={0}", icon));
-                new FileInfo(ico.GetIcoPath(Path.GetTempPath())).Attributes  = new FileInfo(path).Attributes = FileAttributes.Hidden | FileAttributes.System;              
+                File.WriteAllText(path, string.Format("[.ShellClassInfo]\r\nIconResource={0}", icon));
+                new FileInfo(ico.GetIcoPath(Path.GetTempPath())).Attributes = new FileInfo(path).Attributes = FileAttributes.Hidden | FileAttributes.System;
 
                 paths.Add(path);
             }
@@ -263,13 +238,11 @@ namespace Iconizer
                 {
                     if (CheckIfExist(path)) { }
                     else if (CheckIfImage(path))
-                    {
                         AddImage(Image.FromFile(path), path);
-                    }
                     else if (CheckIfBinary(path))
-                    {
                         AddBinary(path);
-                    }
+                    else if (CheckIfIcon(path))
+                        AddIcon(path);
                 }
                 _view.EndUpdate();
             }
@@ -323,6 +296,8 @@ namespace Iconizer
                         AddImage(Image.FromFile(path), path);
                     if (CheckIfBinary(path))
                         AddBinary(path);
+                    else if (CheckIfIcon(path))
+                        AddIcon(path);
                 }
             }
         }
@@ -346,19 +321,26 @@ namespace Iconizer
 
         private void _view_ItemDrag(object sender, ItemDragEventArgs e)
         {
-            bool withINI = ModifierKeys == Keys.Control;
+            bool withPNG = ModifierKeys == Keys.Shift;
+            bool withINI = !withPNG && ModifierKeys == Keys.Control;
+
             UseWaitCursor = true;
             if (withINI)
                 this.Text = "Iconizer - Drop to Change Folder icon";
+            else
+                this.Text = withPNG ? "Iconizer - Release SHIFT and Drop to Export PNG" : "Iconizer - Drop to Export ICO";
+
             Application.DoEvents();
-            var lists = SendToCopyDump(triggerInvalidating = withINI);
+            var lists = SendToCopyDump((triggerInvalidating = withINI) ? DropOperation.DesktopINI : (withPNG ? DropOperation.BitmapExport : DropOperation.NormalExport));
             var data = new DataObject();
             data.SetFileDropList(lists);
             data.SetData("Preferred DropEffect", DragDropEffects.Move); // Cut
-            
+
             DoDragDrop(data, DragDropEffects.Copy);
             if (withINI)
                 this.Text = "Iconizer - Click here to Invalidate the explorer cache";
+            else
+                this.Text = "Iconizer";
             UseWaitCursor = false;
         }
 
@@ -381,7 +363,7 @@ namespace Iconizer
         private void label1_Click(object sender, EventArgs e)
         {
             MessageBox.Show("Iconizer is made with <3 by Wello Soft\n\n" +
-                "http://github.com/willnode/Iconizer" + "\n" + 
+                "http://github.com/willnode/Iconizer" + "\n" +
                 "http://wellosoft.wordpress.com", "Iconizer " + AssemblyName.GetAssemblyName(Assembly.GetExecutingAssembly().Location).Version.ToSt‌​ring(), MessageBoxButtons.OK, MessageBoxIcon.Information
                 );
         }
